@@ -12,7 +12,7 @@ function love.load()
 	pong = {
 		options = {
 			direct_collisions = false,
-			cpu = false,
+			cpu = true,
 			cpu_mod = true
 		},
 		graphics = {
