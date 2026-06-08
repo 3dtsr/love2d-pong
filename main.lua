@@ -1,3 +1,4 @@
+--compatablilty
 table.copy = table.copy or function(t)
 	local t2 = {}
 	for i,v in pairs(t) do
@@ -12,11 +13,14 @@ function love.load()
 	pong = {
 		options = {
 			direct_collisions = false,
-			cpu = true,
-			cpu_mod = true
+			cpu = false,
+			cpu1 = false,
+			cpu_mod = true,
+			cpu_debug = false,
 		},
 		graphics = {
-			ubuntu_bg=love.graphics.newFont("ubuntu-font-family-0.83/Ubuntu-B.ttf", 300)},
+			ubuntu_bg = love.graphics.newFont("ubuntu-font-family-0.83/Ubuntu-B.ttf", 300)
+		},
 		paddles = {
 			{
 				pos = 0,
@@ -41,6 +45,9 @@ function love.load()
 			ywidth = 50,
 			sens = 2000,
 			friction = 0.95,
+		},
+		particles = {
+
 		},
         level = 0,
 		collisions = 0,
@@ -151,11 +158,14 @@ function love.update(dtime)
 	--controls
 	if pong.menu == "game" then
 		local control = 0
-		if love.keyboard.isDown('w') then
-			control = -1
-		elseif love.keyboard.isDown('s') then
-			control = 1
+		if not pong.options.cpu1 then
+			if love.keyboard.isDown('w') then
+				control = -1
+			elseif love.keyboard.isDown('s') then
+				control = 1
+			end
 		end
+
 		local control2 = 0
 		if not pong.options.cpu then
 			if love.keyboard.isDown('i') then
@@ -167,9 +177,9 @@ function love.update(dtime)
 
 		for i, touch in pairs(love.touch.getTouches()) do
 			local x, y = love.touch.getPosition(touch)
-			if x < w/2 or pong.options.cpu then
+			if (pong.options.cpu and not pong.options.cpu1) or x < w/2 then
 				control = math.sign(y - (h/2))
-			else
+			elseif (pong.options.cpu1 and not pong.options.cpu) or x > w/2 then
 				control2 = math.sign(y - (h/2))
 			end
 		end
@@ -198,6 +208,37 @@ function love.update(dtime)
 				else
 					control2 = 1
 				end
+				p.target_y = target_y
+				p.target_b = b
+			end
+		end
+
+		if pong.options.cpu1 then
+			local inds = {}
+			local xvels = {}
+			for i,b in pairs(pong.balls) do
+				inds[b.vel.x] = i
+				xvels[#xvels+1] = b.vel.x
+			end
+			local b = pong.balls[inds[math.min(table.unpack(xvels))]]
+			if b.vel.x < 0 then
+				local p = pong.paddles[1]
+				local x_dist = -50+b.pos.x+b.radius
+				local slope = b.vel.y / -b.vel.x
+				local target_y = x_dist * slope + b.pos.y
+				if pong.options.cpu_mod then
+					target_y = (math.abs(math.floor(target_y/h))%2 == 0) and (target_y % h) or (-target_y % h)
+				end
+				local eta = x_dist / -b.vel.x
+				local y_dist = target_y - p.pos
+				local p_target_vel = y_dist / eta
+				if p.vel > p_target_vel then
+					control = -1
+				else
+					control = 1
+				end				
+				p.target_y = target_y
+				p.target_b = b
 			end
 		end
 
@@ -282,8 +323,8 @@ function love.update(dtime)
 			new_color()
 			b.timeout=0
 
-			local y_avg = (b.vel.y + pong.paddles[1].vel)/2
-			local y_dif = (b.vel.y - pong.paddles[1].vel)
+			local y_avg = (b.vel.y + pong.paddles[2].vel)/2
+			local y_dif = (b.vel.y - pong.paddles[2].vel)
 			b.vel.y = y_avg - y_dif/b.mass
 			pong.paddles[2].vel = y_avg + y_dif*b.mass
 		elseif (b.pos.x > w+b.radius) then
@@ -313,7 +354,7 @@ function love.update(dtime)
 					b3.vel = vector.divide(p3, b3.mass)
 				else
 					local axis = vector.normalize(vector.subtract(b3.pos, b.pos))
-					local normal={x=axis.y,y=-axis.x}
+					local norm = {x=axis.y,y=-axis.x}
 					--[[ local transformed=vector.multiply({x=vector.dot(b.vel,axis),y=vector.dot(b.vel,normal)},b.mass)
 					local transformed3=vector.multiply({x=vector.dot(b3.vel,axis),y=vector.dot(b.vel,normal)},b3.mass)
 					local mean=(transformed.x+transformed3.x)/2
@@ -333,6 +374,22 @@ function love.update(dtime)
 						(p3/2+p/2)/1e10
 					b.vel = vector.add(b.vel, vector.multiply(axis, -v+(p/b.mass)))
 					b3.vel = vector.add(b3.vel, vector.multiply(axis, -v3+(p3/b3.mass)))
+					--particles
+					for i = 1, 20 do
+						local pos = vector.divide(vector.add(b.pos, b3.pos), 2)
+						local vel = vector.divide(vector.add(b.vel, b3.vel), 4)
+						local rand = 2500/math.random(0,vector.length(vector.subtract(b3.vel,b.vel))*(b.mass+b3.mass)/10)
+						pong.particles[#pong.particles+1] = {
+							pos = pos,
+							vel = vector.add(vector.add(vector.multiply(norm, rand), --[[+]] vector.multiply(axis, math.random(-10,10))), --[[+]] vel),
+							decay = math.random(1, 3)
+						}
+						pong.particles[#pong.particles+1] = {
+							pos = pos,
+							vel = vector.add(vector.add(vector.multiply(norm, -rand), --[[+]] vector.multiply(axis, math.random(-10,10))), --[[+]] vel),
+							decay = math.random(1, 3)
+						}
+					end
 				end
 				pong.collisions = pong.collisions + 1
 			else
@@ -346,6 +403,21 @@ function love.update(dtime)
 			b3.collision = true
 		else
 			b.collision = false
+		end
+		--PARTICLES
+		for i,v in pairs(pong.particles) do
+			v.pos = vector.add(v.pos, vector.multiply(v.vel, dtime))
+			if v.time then
+				if v.time < 0 then
+					pong.particles[i] = nil
+				end
+				v.time = v.time - dtime
+			elseif v.decay then
+				if v.decay < 0.1 then
+					pong.particles[i] = nil
+				end
+				v.decay = v.decay * 0.75^dtime
+			end
 		end
 	end
 end
@@ -365,16 +437,45 @@ function love.draw()
 	love.graphics.printf(pong.paddles[2].score, pong.graphics.ubuntu_bg, 3*w/4-500,h/2-150, 1000, "center"--[[0, 5, 5]])
 	love.graphics.reset()
 	--paddles
-	love.graphics.setColor(1,0.1,0.1,1)
+	love.graphics.setColor(1,1,1,1)
+	if not pong.options.cpu1 then
+		love.graphics.setColor(1,0.1,0.1,1)
+	end
 	love.graphics.line(50,(pong.paddles[1].pos - pong.paddle.ywidth), 50,(pong.paddles[1].pos + pong.paddle.ywidth))
-	love.graphics.setColor(0.1,0.1,1,1)
+	
+	love.graphics.setColor(1,1,1,1)
+	if not pong.options.cpu then
+		love.graphics.setColor(0.1,0.1,1,1)
+	end
 	love.graphics.line(love.graphics.getWidth()-50,(pong.paddles[2].pos - pong.paddle.ywidth),
 		love.graphics.getWidth()-50,(pong.paddles[2].pos + pong.paddle.ywidth)
 	)
+	love.graphics.reset()
+	--cpu debug
+	if pong.options.cpu_debug then
+		love.graphics.setColor(1,0,0,1)
+		if pong.paddles[1].target_y then
+			love.graphics.circle("fill", 50,pong.paddles[1].target_y, 10)
+		end
+		if pong.paddles[1].target_b then
+			local b = pong.paddles[1].target_b
+			love.graphics.circle("fill", b.pos.x,b.pos.y, b.radius)
+		end
+	
+		love.graphics.setColor(0,0,1,1)
+		if pong.paddles[2].target_y then
+			love.graphics.circle("fill",w-50,pong.paddles[2].target_y,10)
+		end
+		if pong.paddles[2].target_b then
+			local b = pong.paddles[2].target_b
+			love.graphics.circle("fill", b.pos.x,b.pos.y, b.radius)
+		end
+	end
+	love.graphics.reset()
 	--balls
 	local total_p = {x=0,y=0}
 	for i,b in pairs(pong.balls) do
-		love.graphics.setColor(1,b.collision and 0 or 1,b.collision and 0 or 1,b.timeout > 5 and -b.timeout+16 or 1)
+		-- love.graphics.setColor(1,b.collision and 0 or 1,b.collision and 0 or 1,b.timeout > 5 and -b.timeout+16 or 1)
 		love.graphics.circle("line",b.pos.x,b.pos.y,b.radius)
 		if pong.p_vec then
 			local p = vector.multiply(b.vel, b.mass)
@@ -387,4 +488,10 @@ function love.draw()
 		--love.graphics.circle("fill",love.graphics.getWidth()/2,love.graphics.getHeight()/2, 8)
 	end
 	love.graphics.line(w/2,h/2, w/2+total_p.x/5,h/2+total_p.y/5)
+	--particles
+	for i,v in pairs(pong.particles) do
+		love.graphics.setColor(1,1,1,v.decay)
+		-- love.graphics.draw(pong.graphics.spark, v.pos.x, v.pos.y)
+		love.graphics.points(v.pos.x, v.pos.y)
+	end
 end
