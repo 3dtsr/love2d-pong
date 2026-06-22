@@ -83,6 +83,16 @@ function love.load()
 					pong.options.win_score = math.floor(self.value)
 				end
 			},
+			{name="debug", header=false, value=false, boolean=true,
+				set_value = function(self)
+					pong.options.debug = self.value
+				end
+			},
+			{name="CPU debug", header=false, value=false, boolean=true,
+				set_value = function(self)
+					pong.options.cpu_debug = self.value
+				end
+			},
 			{name="PHYSICS", header=true},
 			{name="gravity multiplier", header=false, value=0,
 				display = function(self)
@@ -649,7 +659,7 @@ function love.update(dtime)
 		else
 			pong.options_scroll_pos = pong.options_scroll_pos + pong.options_scroll_vel*_dtime
 			pong.options_scroll_pos = pong.options_scroll_pos < 0 and 0 or pong.options_scroll_pos
-			pong.options_scroll_pos = pong.options_scroll_pos > 50*#pong.options_list and 50*#pong.options_list or pong.options_scroll_pos
+			pong.options_scroll_pos = pong.options_scroll_pos > 50*#pong.options_list-50 and 50*#pong.options_list-50 or pong.options_scroll_pos
 			pong.options_scroll_vel = pong.options_scroll_vel/10^_dtime
 
 			if math.abs(pong.options_scroll_vel) > 50 then
@@ -687,7 +697,7 @@ end
 function love.mousemoved(x,y, dx,dy, _istouch, istouch)
 	local old_hovered = pong.hovered_button
 	if _istouch then
-		pong.hovered_button = 0
+		-- pong.hovered_button = 0
 	elseif (not love.mouse.isDown(1)) or (love.mouse.isDown(1) and istouch) then
 		if pong.menu == "menu" then
 			if pong.menu_title then
@@ -711,7 +721,7 @@ function love.mousemoved(x,y, dx,dy, _istouch, istouch)
 						pong.hovered_button = 10
 					end
 				else
-					pong.hovered_button = 0
+					-- pong.hovered_button = 0
 				end
 			end
 		elseif pong.menu == "game" or pong.menu == "pause" then
@@ -730,8 +740,8 @@ function love.mousemoved(x,y, dx,dy, _istouch, istouch)
 			end
 		end
 	end
-	if dx and pong.hovered_button > 10 and (love.mouse.isDown(1) or istouch) and not (pong.options_list[pong.hovered_button-10].header or pong.options_list[pong.hovered_button-10].boolean) then
-		pong.options_list[pong.hovered_button-10].value = pong.options_list[pong.hovered_button-10].value + dx/50
+	if x > w/2 and dx and pong.hovered_button > 10 and (love.mouse.isDown(1) or istouch) and not (pong.options_list[pong.hovered_button-10].header or pong.options_list[pong.hovered_button-10].boolean) then
+		pong.options_list[pong.hovered_button-10].value = pong.options_list[pong.hovered_button-10].value + dx/50 - dy/50
 		pong.options_list[pong.hovered_button-10].set_value(pong.options_list[pong.hovered_button-10])
 	end
 end
@@ -758,6 +768,11 @@ function love.mousepressed(x,y, button, istouch, preses)
 					pong.paddles[1].score = 0
 					pong.paddles[2].score = 0
 					pong.hovered_button = 0
+				end
+				
+				if not istouch and x > w/2 and pong.hovered_button > 10 and (love.mouse.isDown(1) or istouch) and pong.options_list[pong.hovered_button-10].boolean and (not pong.options_list[pong.hovered_button-10].header) then
+					pong.options_list[pong.hovered_button-10].value = not pong.options_list[pong.hovered_button-10].value
+					pong.options_list[pong.hovered_button-10].set_value(pong.options_list[pong.hovered_button-10])
 				end
 			end
 		elseif pong.menu == "game" then
@@ -786,8 +801,18 @@ love.touchpressed = function(id, x,y, dx,dy, pressure)
 	love.mousemoved(x,y, dx,dy, false, true)
 	love.mousepressed(x,y, 1, true, 1)
 	love.touchmoved(id, x,y, dx,dy, pressure)
-	pong.hovered_button = 0
+	if not (pong.menu == "menu" and (not pong.menu_title) and pong.hovered_button > 10) then
+		pong.hovered_button = 0
+	end
+	if x > w/2 and pong.hovered_button > 10 and (love.mouse.isDown(1) or istouch) and pong.options_list[pong.hovered_button-10].boolean and (not pong.options_list[pong.hovered_button-10].header) then
+		pong.options_list[pong.hovered_button-10].value = not pong.options_list[pong.hovered_button-10].value
+		pong.options_list[pong.hovered_button-10].set_value(pong.options_list[pong.hovered_button-10])
+	end
 end
+
+-- love.touchreleased = function(id, x,y, dx,dy, pressure)
+-- 	love.mousemoved(x,y, dx,dy, false, true)
+-- end
 
 love.touchmoved = function(id, x,y, dx,dy, pressure)
 	if pong.menu == "menu" and (not pong.menu_title) then
@@ -795,8 +820,11 @@ love.touchmoved = function(id, x,y, dx,dy, pressure)
 			if (math.abs(-dy/pong.dtime) > math.abs(pong.options_scroll_vel)) or (math.abs(-dy/pong.dtime) < math.abs(pong.options_scroll_vel)/10) then
 				pong.options_scroll_vel = -dy/pong.dtime
 			end
-		else
-			love.mousemoved(x,y, dx,dy, false)
+		elseif x > w/2 then
+			if dx and pong.hovered_button > 10 and (love.mouse.isDown(1) or istouch) and not (pong.options_list[pong.hovered_button-10].header or pong.options_list[pong.hovered_button-10].boolean) then
+				pong.options_list[pong.hovered_button-10].value = pong.options_list[pong.hovered_button-10].value + dx/50 - dy/50
+				pong.options_list[pong.hovered_button-10].set_value(pong.options_list[pong.hovered_button-10])
+			end
 		end
 	end
 end
@@ -966,7 +994,7 @@ function love.draw()
 				love.graphics.printf(v.name, pong.graphics.ubuntu_b_20, 155,80+50*(i-1)+25-10-pong.options_scroll_pos, w-(155*2), (v.header and "center" or "left"))
 				
 				if not v.header then
-					love.graphics.printf(v.display(v), pong.graphics.ubuntu_b_20, 155,80+50*(i-1)+25-10-pong.options_scroll_pos, w-(155*2), "right")
+					love.graphics.printf(v.display and v.display(v) or tostring(v.value), pong.graphics.ubuntu_b_20, 155,80+50*(i-1)+25-10-pong.options_scroll_pos, w-(155*2), "right")
 				end
 			end
 		end
