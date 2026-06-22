@@ -1,3 +1,6 @@
+--TODO:give nudge after ball timeout
+--TODO:fix particle gravity
+
 --compatablilty
 table.copy = table.copy or function(t)
 	local t2 = {}
@@ -11,19 +14,134 @@ table.unpack = table.unpack or unpack
 local is_within = function(px,py, x,y, w,h)
 	return px>x and py>y and px < x+w and py < y+h
 end
+--number tostring
+
+local e_tostring = function(n, round, base)
+	if n == 0 then
+		return "0"
+	elseif n == nan then
+		return "nan"
+	end
+	local base = base or 10
+	local round = round or 0.01
+	assert(type(n or "") == "number", "space3d.e_tostring: invalid input, ".."got "..type(n))
+
+	local sign = (n>0 and 1) or (n==0 and 0) or (-1)
+	local n = n*sign
+	local exp = math.floor(math.log(n, 10))
+	local n = n/(10^exp)
+	local n = math.floor(n/round)*round *sign
+	return n.."e"..exp
+end
+local smart_round = function(n)
+	local round = 10^math.floor(math.log(math.abs(n), 10))/10
+	if round > 100 or round < 0.001 then return e_tostring(n) end
+	if round > 1 then round = 1 end
+	if round == 0 then round = 1 end
+	return math.floor(n/round)*round
+end
+
 function love.load()
 	math.randomseed(os.time())
 	pong = {
-		options = {
+		default_options = {
 			direct_collisions = false,
 			cpu = true,
 			cpu1 = false,
 			cpu_mod = true,
 			cpu_debug = false,
 			win_score = 20,
-			debug = true,
+			debug = false,
 			regular_speed = 1,
+			ball_count = 2,
+			ball_min = 100,
+			ball_max = 1400,
+			gravity = 1,
 		},
+		options = nil,
+		options_list = {
+			{name="GENERAL", header=true},
+			{name="ball count", header=false, value=2,
+				display = function(self)
+					return math.ceil(self.value)
+				end,
+				set_value = function(self)
+					self.value = self.value<1 and 1 or self.value
+					pong.options.ball_count = math.ceil(self.value)
+				end
+			},
+			{name="win score (WIP)", header=false, value=10,
+				display = function(self)
+					if self.value < 1 then
+						return "endless"
+					else
+						return math.floor(self.value).." - "..math.floor(self.value)
+					end
+				end,
+				set_value = function(self)
+					self.value = self.value<0 and 0 or self.value
+					pong.options.win_score = math.floor(self.value)
+				end
+			},
+			{name="PHYSICS", header=true},
+			{name="gravity multiplier", header=false, value=0,
+				display = function(self)
+					return smart_round(1.5^self.value)
+				end,
+				set_value = function(self)
+					pong.options.gravity = 1.5^self.value
+				end
+			},
+			{name="time warp", header=false, value=0,
+				display = function(self)
+					return smart_round(1.5^self.value)
+				end,
+				set_value = function(self)
+					pong.options.regular_speed = 1.5^self.value
+				end
+			},
+			{name="ball max size", header=false, value=math.log(1400, 1.5),
+				display = function(self)
+					return smart_round(1.5^self.value)
+				end,
+				set_value = function(self)
+					if self.value <= pong.options.ball_min then
+						pong.options.ball_min = self.value
+					end
+					-- self.value = math.log(pong.options.ball_max, 1.5)
+					pong.options.ball_max = 1.5^self.value
+				end
+			},
+			{name="ball min size", header=false, value=math.log(100, 1.5),
+				display = function(self)
+					return smart_round(1.5^self.value)
+				end,
+				set_value = function(self)
+					if self.value >= pong.options.ball_max then
+						pong.options.ball_max = self.value
+					end
+					-- self.value = math.log(pong.options.ball_min, 1.5)
+					pong.options.ball_min = 1.5^self.value
+				end
+			},
+			{name="RESET TO DEFAULTS", header=false, value=0,
+				display = function(self)
+					local str = ">>"
+					for i = 1, self.value do
+						str = str..">"
+					end
+					return "[drag]"..str
+				end,
+				set_value = function(self)
+					if self.value > 3 then
+						pong.options = table.copy(pong.default_options)
+						for i,v in pairs(pong.options_list) do
+							v.value = pong.default_options_list[i]
+						end
+					end
+				end}
+		},
+		default_options_list = nil,
 		graphics = {
 			ubuntu_b_300 = love.graphics.newFont("ubuntu-font-family-0.83/Ubuntu-B.ttf", 300),
 			ubuntu_b_80 = love.graphics.newFont("ubuntu-font-family-0.83/Ubuntu-B.ttf", 80),
@@ -65,12 +183,43 @@ function love.load()
 		speed = 1,
 		menu = "menu",
 		menu_title = true,
-		menucolor = {math.random(0.5,1), math.random(0.5,1), math.random(0.5,1)},
+		menu_color = {1,0,1},
 		hovered_button = 0,
+		options_scroll_pos = 0,
+		options_scroll_vel = 0,
 		color = {1,1,1},
 		log = "",
 		p_vec = false,
 	}
+	function HSV(h, s, v)
+		if s <= 0 then return v,v,v end
+		h = h*6
+		local c = v*s
+		local x = (1-math.abs((h%2)-1))*c
+		local m,r,g,b = (v-c), 0, 0, 0
+		if h < 1 then
+			r, g, b = c, x, 0
+		elseif h < 2 then
+			r, g, b = x, c, 0
+		elseif h < 3 then
+			r, g, b = 0, c, x
+		elseif h < 4 then
+			r, g, b = 0, x, c
+		elseif h < 5 then
+			r, g, b = x, 0, c
+		else
+			r, g, b = c, 0, x
+		end
+		return r+m, g+m, b+m
+	end
+	local r,g,b = HSV(math.random(),0.75,1)
+	pong.menu_color = {r,g,b}
+
+	pong.options = table.copy(pong.default_options)
+	pong.default_options_list = {}
+	for i,v in pairs(pong.options_list) do
+		pong.default_options_list[i] = v.value
+	end
 	h = love.graphics.getHeight()
 	w = love.graphics.getWidth()
 	function reset_pos(i, player)
@@ -86,7 +235,7 @@ function love.load()
 	end
 	function reset(i, player)
 		reset_pos(i, player)
-		local rand = math.random(100,1400)
+		local rand = math.random(pong.options.ball_min,pong.options.ball_max)
 		pong.balls[i].radius = math.sqrt(rand/math.pi)
 		pong.balls[i].mass = rand/500
 	end
@@ -164,7 +313,7 @@ function love.load()
 			return total
 		end
 	}
-	for i = 1,2 do
+	for i = 1,math.ceil(pong.options.ball_count) do
 		pong.balls[i] = table.copy(pong.ball_template)
 		reset(i)
 	end
@@ -174,6 +323,7 @@ function love.update(dtime)
 	h = love.graphics.getHeight()
 	w = love.graphics.getWidth()
 	love.timer.sleep((1/60)-dtime)
+	pong.dtime = dtime
 	local _dtime = dtime
 	local dtime = dtime * pong.speed
 	--controls
@@ -288,7 +438,9 @@ function love.update(dtime)
 	end
 
 	--BALL PHYS
-	for i,b in pairs(pong.balls) do
+	local new = table.copy(pong.balls)
+	for i,_b in pairs(pong.balls) do
+		local b = new[i]
 		-- pong.paddles[2].pos = b.pos.y
 		--[[ b.timeout = b.timeout+dtime
 		if b.timeout > 16 or b.pos == "reset" then
@@ -303,17 +455,17 @@ function love.update(dtime)
 		for i2,b2 in pairs(pong.balls) do
 			if i2 ~= i and b2.pos.x then
 				repeat
-					local dist = vector.distance(b.pos, b2.pos)
-					if dist < (b.radius + b2.radius) then dist = math.huge end
-					local dir = vector.normalize(vector.subtract(b2.pos, b.pos))
-					local force = pong.speed * b2.mass * 20000
-					b.vel = vector.add(b.vel, vector.multiply(dir, force / dist^2))
+					local dist = vector.distance(_b.pos, b2.pos)
+					if dist < (_b.radius + b2.radius) then dist = math.huge end
+					local dir = vector.normalize(vector.subtract(b2.pos, _b.pos))
+					local force = pong.speed * b2.mass * 20000 * pong.options.gravity
+					b.vel = vector.add(_b.vel, vector.multiply(dir, force / dist^2))
 				until true
 			end
 		end
 		--pos
 		for axis, vel in pairs(b.vel) do
-			b.pos[axis] = b.pos[axis]+ (vel*dtime)
+			b.pos[axis] = _b.pos[axis]+ (vel*dtime)
 		end
 		--vert collision
 		if (b.pos.y<b.radius) then
@@ -334,19 +486,19 @@ function love.update(dtime)
 			b.vel.y = y_avg - y_dif/b.mass
 			pong.paddles[1].vel = y_avg + y_dif*b.mass
 		elseif (b.pos.x < -b.radius) then
-			reset(i, 1)
 			if pong.menu == "game" then
 				pong.paddles[2].score = pong.paddles[2].score + 1
-				local mag = math.random(20,100)
-				for dir = 0, 359, 5 do
+				for dir = 45, 180-45, 1 do
+					local mag = math.random(50,200)
 					pong.particles[#pong.particles+1] = {
-						pos = {x=3*w/4,y=60},
+						pos = b.pos,
 						vel = {x=mag*math.sin(dir), y=mag*math.cos(dir)},
 						decay = math.random(1, 3),
 						color = {0,0,1}
 					}
 				end
 			end
+			reset(i, 1)
 		elseif (b.pos.x > w-(50+b.radius)) and (b.pos.x < w-(30+b.radius)) and (math.abs(pong.paddles[2].pos-b.pos.y) < (pong.paddle.ywidth + b.radius))then --right
 			b.pos.x = (w-50-b.radius)
 			b.vel.x = -math.abs(b.vel.x)
@@ -357,19 +509,19 @@ function love.update(dtime)
 			b.vel.y = y_avg - y_dif/b.mass
 			pong.paddles[2].vel = y_avg + y_dif*b.mass
 		elseif (b.pos.x > w+b.radius) then
-			reset(i, 2)
 			if pong.menu == "game" then
 				pong.paddles[1].score = pong.paddles[1].score + 1
-				local mag = math.random(20,100)
-				for dir = 0, 359, 5 do
+				for dir = -45, -180+45, -1 do
+					local mag = math.random(50,200)
 					pong.particles[#pong.particles+1] = {
-						pos = {x=w/4,y=60},
+						pos = b.pos,
 						vel = {x=mag*math.sin(dir), y=mag*math.cos(dir)},
 						decay = math.random(1, 3),
 						color = {1,0,0}
 					}
 				end
 			end
+			reset(i, 2)
 		end
 		-- ball collision
 		local b3
@@ -394,8 +546,8 @@ function love.update(dtime)
 				else
 					local axis = vector.normalize(vector.subtract(b3.pos, b.pos))
 					local norm = {x=axis.y,y=-axis.x}
-					--[[ local transformed=vector.multiply({x=vector.dot(b.vel,axis),y=vector.dot(b.vel,normal)},b.mass)
-					local transformed3=vector.multiply({x=vector.dot(b3.vel,axis),y=vector.dot(b.vel,normal)},b3.mass)
+					--[[ local transformed=vector.multiply({x=vector.dot(b.vel,axis),y=vector.dot(b.vel,norm)},b.mass)
+					local transformed3=vector.multiply({x=vector.dot(b3.vel,axis),y=vector.dot(b.vel,norm)},b3.mass)
 					local mean=(transformed.x+transformed3.x)/2
 					local dif=(transformed.x-transformed3.x)
 					dif=-dif/2
@@ -403,8 +555,8 @@ function love.update(dtime)
 					transformed3.x=mean-dif/2
 					transformed=vector.divide(transformed, b.mass)
 					transformed3=vector.divide(transformed3, b3.mass)
-					b.vel = vector.add(vector.multiply(axis,transformed.x), vector.multiply(normal,transformed.y))
-					b3.vel = vector.add(vector.multiply(axis,transformed3.x), vector.multiply(normal,transformed3.y)) ]]
+					b.vel = vector.add(vector.multiply(axis,transformed.x), vector.multiply(norm,transformed.y))
+					b3.vel = vector.add(vector.multiply(axis,transformed3.x), vector.multiply(norm,transformed3.y)) ]]
 					local v = vector.dot(axis, vector.subtract(b.vel, b3.vel))
 					local v3 = vector.dot(axis, vector.subtract(b3.vel, b.vel))
 					local p = v * b.mass
@@ -421,12 +573,12 @@ function love.update(dtime)
 						pong.particles[#pong.particles+1] = {
 							pos = pos,
 							vel = vector.add(vector.add(vector.multiply(norm, rand), --[[+]] vector.multiply(axis, math.random(-10,10))), --[[+]] vel),
-							decay = math.random(1, 3)
+							decay = math.random(4, 7)
 						}
 						pong.particles[#pong.particles+1] = {
 							pos = pos,
 							vel = vector.add(vector.add(vector.multiply(norm, -rand), --[[+]] vector.multiply(axis, math.random(-10,10))), --[[+]] vel),
-							decay = math.random(1, 3)
+							decay = math.random(4, 7)
 						}
 					end
 				end
@@ -443,38 +595,75 @@ function love.update(dtime)
 		else
 			b.collision = false
 		end
-		--PARTICLES
-		for i,v in pairs(pong.particles) do
-			local dtime2 = dtime
-			if v.menu then
-				dtime2 = _dtime
+	end
+	pong.balls = new
+	--update ball count
+	if math.ceil(pong.options.ball_count) ~= #pong.balls then
+		for i = #pong.balls+1, math.ceil(pong.options.ball_count) do
+			pong.balls[i] = table.copy(pong.ball_template)
+			reset(i)
+		end
+		for i = math.ceil(pong.options.ball_count)+1, #pong.balls do
+			pong.balls[i] = nil
+		end
+	end
+
+	--PARTICLES
+	for i,v in pairs(pong.particles) do
+		if i > 2000 then
+			pong.particles[i] = nil
+		end
+		local dtime2 = dtime
+		if v.menu then
+			dtime2 = _dtime
+		end
+		v.pos = vector.add(v.pos, vector.multiply(v.vel, dtime2))
+		if v.time then
+			if v.time < 0 then
+				pong.particles[i] = nil
 			end
-			v.pos = vector.add(v.pos, vector.multiply(v.vel, dtime2))
-			if v.time then
-				if v.time < 0 then
-					pong.particles[i] = nil
-				end
-				v.time = v.time - dtime2
-			elseif v.decay then
-				if v.decay < 0.1 then
-					pong.particles[i] = nil
-				end
-				v.decay = v.decay * 0.75^dtime2
+			v.time = v.time - dtime2
+		elseif v.decay then
+			if v.decay < 0.1 then
+				pong.particles[i] = nil
+			end
+			v.decay = v.decay * 0.75^dtime2
+		end
+		
+		for i,b in pairs(pong.balls) do
+			if b.pos.x then
+				repeat
+					local dist = vector.distance(v.pos, b.pos)
+					local dir = vector.normalize(vector.subtract(b.pos, v.pos))
+					local force = pong.speed * b.mass * 1000
+					v.vel = vector.add(v.vel, vector.multiply(dir, force / dist^2))
+				until true
 			end
 		end
-		--MENU
-		if pong.menu == "menu" and pong.menu_title then
+	end
+	--MENU
+	if pong.menu == "menu" then
+		if pong.menu_title then
 			pong.options.cpu = true
 			pong.options.cpu1 = true
-		end
-		--PAUSE
-		if pong.menu == "pause" and pong.speed > 0.01 then
-			pong.speed = pong.speed/5^_dtime
-		elseif pong.speed < pong.options.regular_speed then
-			pong.speed = pong.speed*20^_dtime
 		else
-			pong.speed = pong.options.regular_speed
+			pong.options_scroll_pos = pong.options_scroll_pos + pong.options_scroll_vel*_dtime
+			pong.options_scroll_pos = pong.options_scroll_pos < 0 and 0 or pong.options_scroll_pos
+			pong.options_scroll_pos = pong.options_scroll_pos > 50*#pong.options_list and 50*#pong.options_list or pong.options_scroll_pos
+			pong.options_scroll_vel = pong.options_scroll_vel/10^_dtime
+
+			if math.abs(pong.options_scroll_vel) > 50 then
+				love.mousemoved(love.mouse.getPosition())
+			end
 		end
+	end
+	--PAUSE
+	if pong.menu == "pause" and pong.speed > 0.01 then
+		pong.speed = pong.speed/5^_dtime
+	elseif pong.speed < pong.options.regular_speed then
+		pong.speed = pong.speed*20^_dtime
+	else
+		pong.speed = pong.options.regular_speed
 	end
 end
 
@@ -487,7 +676,7 @@ local select_button = function(x,y, w2,h2, ind, color)
 					vel = {x=math.random(sign*100, sign*5), y=math.random(-20,20)},
 					decay = math.random(1,2),
 					menu = true,
-					color = color or pong.menucolor
+					color = color or pong.menu_color
 				}
 			end
 		end
@@ -495,10 +684,11 @@ local select_button = function(x,y, w2,h2, ind, color)
 	pong.hovered_button = ind or pong.hovered_button
 end
 
-function love.mousemoved(x,y, dx,dy, istouch)
-	if istouch then
+function love.mousemoved(x,y, dx,dy, _istouch, istouch)
+	local old_hovered = pong.hovered_button
+	if _istouch then
 		pong.hovered_button = 0
-	else
+	elseif (not love.mouse.isDown(1)) or (love.mouse.isDown(1) and istouch) then
 		if pong.menu == "menu" then
 			if pong.menu_title then
 				if is_within(x,y, w/2-100,3/4*h, 200,25) then
@@ -513,8 +703,13 @@ function love.mousemoved(x,y, dx,dy, istouch)
 					select_button(100,h/2-25, 25,50, 2, {1,0,0})
 				elseif is_within(x,y, w-50-100,h/2-50, 100,100) then--blue
 					select_button(w-25-100,h/2-25, 25,50, 3, {0,0,1})
-				elseif is_within(x,y, w/2-100,3/4*h, 200,25) then--start
-					select_button(w/2-100,3/4*h, 200,25, 4)
+				elseif is_within(x,y, w/2-100,h-30, 200,25) then--start
+					select_button(w/2-100,h-30, 200,25, 4)
+				elseif is_within(x,y, 155,80, w-(135*2)-40,h-30-80-10) then
+					pong.hovered_button = 10 + math.ceil((y-80+pong.options_scroll_pos)/50)
+					if pong.hovered_button < 10 or not pong.options_list[pong.hovered_button-10] then
+						pong.hovered_button = 10
+					end
 				else
 					pong.hovered_button = 0
 				end
@@ -534,6 +729,10 @@ function love.mousemoved(x,y, dx,dy, istouch)
 				end
 			end
 		end
+	end
+	if dx and pong.hovered_button > 10 and (love.mouse.isDown(1) or istouch) and not (pong.options_list[pong.hovered_button-10].header or pong.options_list[pong.hovered_button-10].boolean) then
+		pong.options_list[pong.hovered_button-10].value = pong.options_list[pong.hovered_button-10].value + dx/50
+		pong.options_list[pong.hovered_button-10].set_value(pong.options_list[pong.hovered_button-10])
 	end
 end
 
@@ -577,10 +776,29 @@ function love.mousepressed(x,y, button, istouch, preses)
 	-- end
 end
 
-love.touchpressed = function(id, x, y, dx, dy, pressure)
-	love.mousemoved(x,y, dx,dy, false)
+love.wheelmoved = function(x,y)
+	if pong.menu == "menu" and (not pong.menu_title) and pong.hovered_button >= 10 then
+		pong.options_scroll_vel = pong.options_scroll_vel - y*100
+	end
+end
+
+love.touchpressed = function(id, x,y, dx,dy, pressure)
+	love.mousemoved(x,y, dx,dy, false, true)
 	love.mousepressed(x,y, 1, true, 1)
+	love.touchmoved(id, x,y, dx,dy, pressure)
 	pong.hovered_button = 0
+end
+
+love.touchmoved = function(id, x,y, dx,dy, pressure)
+	if pong.menu == "menu" and (not pong.menu_title) then
+		if x < w/2 then
+			if (math.abs(-dy/pong.dtime) > math.abs(pong.options_scroll_vel)) or (math.abs(-dy/pong.dtime) < math.abs(pong.options_scroll_vel)/10) then
+				pong.options_scroll_vel = -dy/pong.dtime
+			end
+		else
+			love.mousemoved(x,y, dx,dy, false)
+		end
+	end
 end
 
 function love.draw()
@@ -589,7 +807,7 @@ function love.draw()
 	---GAME
 	if pong.menu == "game" or pong.menu == "pause" then
 		--score
-		love.graphics.setColor(1,1,1,0.5)
+		love.graphics.setColor(0.5,0.5,0.5,1)
 		love.graphics.printf(pong.paddles[1].score, pong.graphics.ubuntu_b_80, w/4-500,20, 1000, "center"--[[0, 5, 5]])
 		love.graphics.printf(pong.paddles[2].score, pong.graphics.ubuntu_b_80, 3*w/4-500,20, 1000, "center"--[[0, 5, 5]])
 		--pause
@@ -688,12 +906,12 @@ function love.draw()
 		love.graphics.setColor(0,0,0,0.5)
 		love.graphics.rectangle("fill", 0,0, w,h)
 		love.graphics.reset()
-		love.graphics.setColor(table.unpack(pong.menucolor))
+		love.graphics.setColor(table.unpack(pong.menu_color))
 		if pong.menu_title then
 			love.graphics.printf("Just a Regular Game of Pong", pong.graphics.ubuntu_i_40, w/2-500,100, 1000, "center")
 			love.graphics.reset()
 
-			love.graphics.printf("PLAY", pong.graphics.ubuntu_b_20, w/2-100,3/4*h, 200, "center")
+			love.graphics.printf("SELECT...", pong.graphics.ubuntu_b_20, w/2-100,3/4*h, 200, "center")
 			love.graphics.setColor(1,1,1,pong.hovered_button ~= 1 and (math.sin(os.clock()*7)/3+2/3) or 1)
 			if pong.hovered_button == 1 then
 				love.graphics.setLineWidth(3)
@@ -718,15 +936,39 @@ function love.draw()
 			love.graphics.printf(pong.options.cpu and "CPU" or "BLUE", pong.graphics.ubuntu_20, w-100,h/2-500, 1000, "center", math.rad(90))
 			
 			love.graphics.reset()
-			love.graphics.printf("START", pong.graphics.ubuntu_b_20, w/2-100,3/4*h, 200, "center")
-			love.graphics.setColor(table.unpack(pong.menucolor))
+			love.graphics.printf("START", pong.graphics.ubuntu_b_20, w/2-100,h-30, 200, "center")
+			love.graphics.setColor(table.unpack(pong.menu_color))
 			if pong.hovered_button == 4 then
 				love.graphics.setLineWidth(3)
 			end
-			love.graphics.rectangle("line", w/2-100,3/4*h, 200,25)
+			love.graphics.rectangle("line", w/2-100,h-30, 200,25)
 			love.graphics.reset()
-			
-			-- love.graphics.printf("first to "..pong.options.win_score.." point"..(pong.options.win_score==1 and "" or "s"), pong.graphics.ubuntu_20, w/2-500,100, 1000, "center")
+
+			-- love.graphics.rectangle("line", 155,80, w-(135*2)-40,h-30-80-10)
+			for i,v in pairs(pong.options_list) do
+				-- love.graphics.setColor(1,1,1,0.5)
+				-- love.graphics.rectangle("line", 155,80+50*(i-1)-pong.options_scroll_pos, w-(135*2)-40,50)
+				-- love.graphics.reset()
+				local a = 1
+				local posy = 80+50*(i-1)+25-pong.options_scroll_pos
+				if posy < 110 then
+					a = posy/110
+				end
+				if posy > h-110 then
+					a = (h-posy)/110
+				end
+				if pong.hovered_button-10 == i and not v.header then
+					love.graphics.setColor(pong.menu_color[1], pong.menu_color[2], pong.menu_color[3],a)
+				else
+					love.graphics.setColor(1,1,1,a)
+				end
+				
+				love.graphics.printf(v.name, pong.graphics.ubuntu_b_20, 155,80+50*(i-1)+25-10-pong.options_scroll_pos, w-(155*2), (v.header and "center" or "left"))
+				
+				if not v.header then
+					love.graphics.printf(v.display(v), pong.graphics.ubuntu_b_20, 155,80+50*(i-1)+25-10-pong.options_scroll_pos, w-(155*2), "right")
+				end
+			end
 		end
 	end
 
@@ -741,9 +983,12 @@ function love.draw()
 		end
 	end
 	
-	love.graphics.setColor(1,1,1,1)
-	love.graphics.printf("menu = "..pong.menu..
-		"\nhovered = "..pong.hovered_button..
-		"\n#particles = "..#pong.particles,
-	pong.graphics.ubuntu_10, 0,0, 1000, "left")
+	if pong.options.debug then
+		love.graphics.setColor(1,1,1,1)
+		love.graphics.printf(math.floor(1/pong.dtime).."FPS\nmenu = "..pong.menu..
+			"\nhovered = "..pong.hovered_button..
+			"\n#particles = "..#pong.particles..
+			"\nscroll_vel = "..pong.options_scroll_vel,
+		pong.graphics.ubuntu_10, 0,0, 1000, "left")
+	end
 end
